@@ -212,7 +212,6 @@ def _main(argv=None) -> int:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9999)
-    parser.add_argument("--proto", default="tcp", choices=["tcp", "udp"])
     args = parser.parse_args(argv)
 
     if args.list or not args.name:
@@ -254,15 +253,27 @@ def _main(argv=None) -> int:
         import time
         from pd_client import PureDataClient
 
-        client = PureDataClient(host=args.host, port=args.port, proto=args.proto)
+        if args.seconds is not None and args.seconds <= 0:
+            print("--seconds must be a positive duration", file=sys.stderr)
+            return 2
+        client = PureDataClient(host=args.host, port=args.port)
         if not client.send_batch(patch.messages()):
+            print(f"failed to send {args.name} to Pd", file=sys.stderr)
             return 1
         wav = os.path.abspath(args.wav)
-        client.send_batch(patch.record_messages(wav))   # open + start
+        # If the patch uploaded but the open/start control fails to land, the
+        # WAV never opens -- surface that instead of reporting success.
+        if not client.send_batch(patch.record_messages(wav)):   # open + start
+            print("failed to start recording (open/start not delivered)",
+                  file=sys.stderr)
+            return 1
         print(f"recording {args.name} -> {wav}")
         if args.seconds:
             time.sleep(args.seconds)
-            client.send("pd-rec stop")
+            if not client.send("pd-rec stop"):
+                print("failed to send stop; the WAV may be truncated",
+                      file=sys.stderr)
+                return 1
             print(f"stopped after {args.seconds}s")
         else:
             print('stop with: python3 pd_client.py "pd-rec stop"')
@@ -271,7 +282,7 @@ def _main(argv=None) -> int:
     if args.send:
         from pd_client import PureDataClient
 
-        client = PureDataClient(host=args.host, port=args.port, proto=args.proto)
+        client = PureDataClient(host=args.host, port=args.port)
         ok = client.send_batch(patch.messages())
         print(f"sent {args.name}: {ok}")
         return 0 if ok else 1

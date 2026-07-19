@@ -2,7 +2,8 @@
 """Lightweight socket bridge for Pure Data dynamic patching (Approach A).
 
 Sends FUDI / [netreceive] messages to a running Pure Data instance over TCP
-(default) or UDP. Standard library only -- no external dependencies.
+(matching the bundled receiver stub). Standard library only -- no external
+dependencies.
 
 A Pd dynamic-patching command is a receiver-addressed FUDI message: the first
 atom names the receiver, the rest is the message, e.g.:
@@ -30,8 +31,8 @@ CLI examples
     # read from stdin
     cat patch.txt | python pd_client.py -
 
-    # target a different host/port/protocol
-    python pd_client.py --host 127.0.0.1 --port 9999 --proto udp "pd dsp 1"
+    # target a different host/port
+    python pd_client.py --host 127.0.0.1 --port 9999 "pd dsp 1"
 """
 from __future__ import annotations
 
@@ -42,26 +43,26 @@ from typing import Iterable, List
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9999
-DEFAULT_PROTO = "tcp"
 DEFAULT_TIMEOUT = 2.0
 
 
 class PureDataClient:
-    """Sends canvas-manipulation messages to a Pd [netreceive] socket."""
+    """Sends canvas-manipulation messages to a Pd [netreceive] socket over TCP.
+
+    The bundled ``templates/receiver_stub.pd`` opens a default (TCP)
+    ``[netreceive 9999]``, so this client speaks TCP. (Pd's UDP mode needs
+    ``[netreceive -u 9999]``; ship that receiver if you want a UDP transport.)
+    """
 
     def __init__(
         self,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
-        proto: str = DEFAULT_PROTO,
         timeout: float = DEFAULT_TIMEOUT,
     ):
         self.host = host
         self.port = int(port)
-        self.proto = proto.lower()
         self.timeout = timeout
-        if self.proto not in ("tcp", "udp"):
-            raise ValueError(f"proto must be 'tcp' or 'udp', got {proto!r}")
 
     @staticmethod
     def format_message(message: str) -> str:
@@ -84,20 +85,14 @@ class PureDataClient:
 
     def _sendall(self, payload: bytes) -> bool:
         try:
-            if self.proto == "tcp":
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(self.timeout)
-                    s.connect((self.host, self.port))
-                    s.sendall(payload)
-            else:  # udp
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.settimeout(self.timeout)
-                    s.sendto(payload, (self.host, self.port))
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(self.timeout)
+                s.connect((self.host, self.port))
+                s.sendall(payload)
             return True
         except OSError as e:
             print(
-                f"[pd_client] error sending to {self.host}:{self.port} "
-                f"({self.proto}): {e}",
+                f"[pd_client] error sending to {self.host}:{self.port}: {e}",
                 file=sys.stderr,
             )
             return False
@@ -143,12 +138,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default=DEFAULT_HOST, help="Pd host (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=DEFAULT_PORT, help="Pd port (default 9999)")
     p.add_argument(
-        "--proto",
-        default=DEFAULT_PROTO,
-        choices=["tcp", "udp"],
-        help="Transport protocol (default tcp)",
-    )
-    p.add_argument(
         "--timeout",
         type=float,
         default=DEFAULT_TIMEOUT,
@@ -177,7 +166,7 @@ def main(argv: List[str] | None = None) -> int:
         return 2
 
     client = PureDataClient(
-        host=args.host, port=args.port, proto=args.proto, timeout=args.timeout
+        host=args.host, port=args.port, timeout=args.timeout
     )
     ok = client.send_batch(messages)
     return 0 if ok else 1
