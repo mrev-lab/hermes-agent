@@ -14,15 +14,15 @@ metadata:
 # Strudel + Hydra Skill
 
 Drive a synchronized audio/visual liveset in a browser and hot-swap it while it
-runs. A tiny standard-library HTTP server hosts one page that loads Strudel
-(pattern-based audio) and Hydra (audio-reactive visuals); the agent pushes new
-"sets" over Server-Sent Events (SSE) and the running page evaluates them without
-a reload. Same DNA as `pd-patching` and `supercollider` — no MCP, no npm, no
-compiled bridge, driving a live instance over a thin protocol — here the
-transport is SSE and both sound *and* picture come from one push. The page also
-**measures what it produces** (audio/visual features) and reports them back,
-closing the live-coding loop so the agent can score a set and evolve it. It
-exports a standalone self-contained `.html`. It does **not** cover the Strudel
+runs. A tiny standard-library HTTP server hosts one page that runs Strudel
+(pattern-based audio) in the page and Hydra (audio-reactive visuals) in an
+isolated iframe; the agent pushes new "sets" over Server-Sent Events (SSE) and
+the running page evaluates them without a reload. Same DNA as `pd-patching` and
+`supercollider` — no MCP, no npm, no compiled bridge, driving a live instance
+over a thin protocol — here the transport is SSE and both sound *and* picture
+come from one push. The page also **measures its own audio output** and reports
+it back, closing the live-coding loop so the agent can score a set and evolve it.
+It exports a standalone self-contained `.html`. It does **not** cover the Strudel
 CodeMirror editor, the TidalCycles Haskell stack, or compiling Hydra.
 
 ## When to Use
@@ -32,6 +32,19 @@ pulse with a strobing kaleidoscope, an ambient drone under drifting noise,
 audio-reactive visuals, a VJ loop — described in words, produced as running
 sound and picture. Skip it for audio-only DSP (use `supercollider` or
 `pd-patching`) or for a static rendered video file.
+
+## Example Requests
+
+What a user might say to Hermes, and what the agent does:
+
+| User says | Agent does |
+|-----------|------------|
+| "Play a dark techno set with a strobing kaleidoscope" | boot the server, open the page, push an `--audio`/`--visual` set |
+| "Make it an ambient drone with slow drifting visuals" | hot-swap a calm pad + slow Hydra set (one push) |
+| "More red, and speed up the beat" | re-push the running set with tweaked color/tempo |
+| "Export this acid set as a web page" | `sh_examples.py acid --export acid.html` |
+| "VJ on your own and keep making it more energetic" | headless browser + audio-fitness `sh_evolve.py` on `/loop` |
+| "Too loud — stop" | `sh_client.py --hush` |
 
 ## Prerequisites
 
@@ -60,8 +73,8 @@ python3 sh_server.py &                 # http://127.0.0.1:8765
 open http://127.0.0.1:8765             # Linux: xdg-open http://127.0.0.1:8765
 ```
 
-**Click "start" in the page.** Browsers require a user gesture before audio and
-the mic-based analyser can begin; the overlay handles that once.
+**Click "start" in the page.** Browsers require a user gesture before audio can
+begin; the overlay handles that once. No microphone is used or requested.
 
 Push a gallery set, or arbitrary code, in one stdin-free command:
 
@@ -88,7 +101,7 @@ Helper scripts (all in `scripts/`, standard library only):
 | `sh_client.py` | Push a set (`--audio`/`--visual`/`--audio-file`/`--visual-file`/`--label`), `--hush`, `--status`, `--observe [--target … --wait …]`. Exposes `push_set()`, `observe()`, `score()`. |
 | `sh_examples.py` | Gallery (`pulse`, `bells`, `drone`, `acid`) + `--list` and `--export FILE`. |
 | `sh_evolve.py` | Score + rank one generation of candidate sets against a fitness `--target` (the evaluation/selection step of the self-improving loop). |
-| `templates/page.html` | The host page: loads Strudel + Hydra, opens the SSE stream, hot-swaps each set, and posts telemetry. Also the export scaffold. |
+| `templates/page.html` | The host page: runs Strudel in the page and Hydra in an isolated iframe, opens the SSE stream, hot-swaps each set, and posts audio telemetry. Also the export scaffold. |
 
 A **set** is JSON — `audio` (Strudel code), `visual` (Hydra code), both, or
 neither with `cmd:"hush"`:
@@ -132,26 +145,19 @@ agent uses as a fitness signal. Reported each ~0.75 s:
 | `level` | overall audio energy (mean of bins) | Strudel output tap |
 | `bands` | per-band FFT magnitudes (8) | Strudel output tap |
 | `centroid` | spectral brightness, 0–1 | Strudel output tap |
-| `brightness` | mean screen luminance, 0–1 | canvas grab † |
-| `rgb` | mean R/G/B, 0–1 each | canvas grab † |
-| `motion` | per-frame visual change, 0–1 | canvas grab † |
 
-**Audio is the dependable fitness signal** — the output tap works headless,
-muted, and mic-free (verified in a live browser). † **Visual features need a
-real, focused, GPU-backed window**: headless SwiftShader can't composite the
-WebGL canvas, and a backgrounded/occluded window throttles Hydra's frame loop —
-both read `brightness`/`motion` ≈ 0. So for an **unattended** evolving loop, run
-the browser headless and target the audio features; visual features are a bonus
-when a person has the window up front.
+**Telemetry is audio-only** — the output tap works headless, muted, and mic-free
+(verified in a live browser). There is no visual telemetry: Hydra's WebGL canvas
+can't be read back in-page (the drawing buffer isn't preserved), so visuals are
+judged by eye. An unattended evolving loop can therefore run the browser
+headless and score on the audio features alone.
 
 The agent runs the loop (it is the mutation operator; the scripts measure,
 score, and select):
 
-1. **Set a fitness target** — a feature vector for the mood. Lead with audio
-   (always reliable), e.g. `{"level":0.6,"centroid":0.4}`; add `brightness`/
-   `motion` only when a focused GPU window is up. `score()` is `1/(1+distance)`
-   over the shared scalar keys (`level`, `centroid`, `brightness`, `motion`);
-   higher is closer.
+1. **Set a fitness target** — an audio feature vector for the mood, e.g.
+   `{"level":0.6,"centroid":0.4}`. `score()` is `1/(1+distance)` over the shared
+   scalar keys (`level`, `centroid`); higher is closer.
 2. **Read the current set:** `python3 sh_client.py --observe --target '{…}'`.
 3. **Mutate:** write 2–4 variations of the best set (nudge patterns, filters,
    Hydra ops) into a candidates JSON list.
@@ -164,7 +170,7 @@ score, and select):
 Run it unattended with the `/loop` skill so the VJ set evolves on its own; use
 `--hush` to stop. This is the `darwinian-evolver` shape with the code as
 organism, the agent as mutator, and telemetry as the evaluator — but here the
-fitness signal comes free from the analyser and canvas.
+fitness signal comes free from the analyser.
 
 ## [CRITICAL] Safety
 
@@ -185,12 +191,17 @@ Two failure modes need active care — both have a one-command escape via
 - **Audio needs the start click.** Strudel's AudioContext stays suspended until
   the user gesture; a set pushed before clicking "start" is retained and applies
   on click. If nothing sounds, confirm the overlay was clicked.
-- **Visual `a.fft` reactivity needs `detectAudio` + mic.** The page inits Hydra
-  with `detectAudio:true` so `a.fft[...]` (used in the *visual* code) reacts to
-  sound; the browser gates it behind the start gesture and a mic prompt, and it
-  hears the room, not a clean tap. Telemetry does **not** depend on this — audio
-  features come from the output tap below. Without the mic, `a.fft[...]` reads
-  zeros and visuals still run, just unreactive.
+- **Hydra is isolated in an iframe on purpose.** Strudel's `initStrudel()` spins
+  up a WebGL context that invalidates Hydra's shader program in the *same*
+  document — the canvas goes blank/gray with `useProgram: program not valid` in
+  the console. Hydra therefore runs in its own `srcdoc` iframe (separate GL
+  context); visual code and `a.fft` cross via `postMessage`. Do not move Hydra
+  back into the main page.
+- **Visuals react to the music with no mic.** Hydra runs `detectAudio:false`; the
+  page feeds `a.fft` from the Strudel-output tap into the iframe every frame, so
+  `a.fft[...]` in visual code reacts to the actual sound. No mic is requested, and
+  `a.fft` is always an 8-element array — a visual referencing it can't throw and
+  blank the render (the mic-less failure mode this replaced).
 - **A bad set shows in the HUD, not the terminal.** Evaluation happens in the
   browser; a syntax error prints `visual error:` / `audio error: …` on the page
   HUD. Watch it, or keep sets small and incremental.
@@ -204,14 +215,13 @@ Two failure modes need active care — both have a one-command escape via
   if you repin.
 - **One set = one screen.** Pushing a new set replaces the whole liveset on
   every connected browser; there is no per-client targeting.
-- **Telemetry is only as good as its sources.** Audio features tap Strudel's
-  output directly (an analyser inserted before the speakers), so they work muted
-  and need no mic — but they read low while a pattern sits between hits, so give
-  each candidate enough `--wait` to settle. The visual grab reads Hydra inside
-  its own frame, but only a real, **focused, GPU-backed** window renders for it:
-  headless SwiftShader and backgrounded/occluded windows (Hydra's frame loop
-  throttled) read blank (`brightness` ≈ 0). Make audio the fitness signal, treat
-  visual as opportunistic, and read all scores as a relative ranking, not truth.
+- **Telemetry is audio-only.** Features tap Strudel's output directly (an
+  analyser before the speakers), so they work muted and need no mic — but they
+  read low while a pattern sits between hits, so give each candidate enough
+  `--wait` to settle. There is **no visual telemetry**: Hydra's WebGL drawing
+  buffer isn't preserved, so in-page readback is black on every browser tried
+  (real GPU included) — judge visuals by eye. Read scores as a relative ranking,
+  not truth.
 
 ## Verification
 

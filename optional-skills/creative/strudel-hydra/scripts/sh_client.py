@@ -45,9 +45,9 @@ def observe(base):
     return get(base, "/telemetry")
 
 
-# Scalar feature keys usable as fitness targets (arrays like `bands`/`rgb` are
-# skipped — target those component-wise via `brightness`, `level`, etc.).
-SCORABLE = ("level", "centroid", "brightness", "motion")
+# Scalar audio feature keys usable as fitness targets (the `bands` array is
+# skipped — target overall energy via `level`, spectral tilt via `centroid`).
+SCORABLE = ("level", "centroid")
 
 
 def score(features, target):
